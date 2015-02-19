@@ -1,4 +1,4 @@
-# Keyframe Reducer v1.14 by Richard Frazer 
+# Keyframe Reducer v1.15 by Richard Frazer 
 # http://www.richardfrazer.com/tools-tutorials/keyframe-reduction-script-for-nuke/
 
 import nuke
@@ -175,10 +175,14 @@ def doReduceKeyframes():
 						tTempKnob.animation(0).addKey(tCopyKeys)
 					
 					#do a quick check to see if 2 keyframes are enough
-					if ( meanAverageError(tOriginalCurve, tTempCurve, tFirstFrame, tLastFrame) < tErrorThreshold ):					
+					deltaH = (tLastFrame - tFirstFrame)
+					deltaV = ( tTempKnob.getValueAt(tLastFrame) - tTempKnob.getValueAt(tFirstFrame) )	 	
+					tMasterSlope = 90 - getAngle (deltaH, deltaV) 
+					if (tMasterSlope<0): tMasterSlope = tMasterSlope + 360;
+
+					if ( meanAverageError(tOriginalCurve, tTempCurve, tFirstFrame, tLastFrame, tMasterSlope) < tErrorThreshold ):					
 						print "looks like this selection of frames was a straight line"						
 					else:
-
 						#otherwise we run the keyframe reducing function on the selected frame range					
 						recursion = findGreatestErrorFrame(tOriginalCurve, tFirstFrame, tLastFrame, tErrorThreshold, tTempKnob, tTempCurve, 0)	
 					
