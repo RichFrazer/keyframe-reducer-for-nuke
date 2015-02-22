@@ -1,4 +1,4 @@
-# Keyframe Reducer v1.15 by Richard Frazer 
+# Keyframe Reducer v1.17 by Richard Frazer 
 # http://www.richardfrazer.com/tools-tutorials/keyframe-reduction-script-for-nuke/
 
 import nuke
@@ -11,8 +11,8 @@ class doReduceKeyframesPanel(nukescripts.PythonPanel):
 		#get reference of tKey knob
 		knob_names = nuke.animations()	
 		knob_name_with_suffix = knob_names[0]
-		print"knob_name_with_suffix "
-		print knob_name_with_suffix
+		#print"knob_name_with_suffix "
+		#print knob_name_with_suffix
 		knob_name = getKnobName(knob_name_with_suffix)
 		k = nuke.thisNode()[knob_name]
 
@@ -24,14 +24,15 @@ class doReduceKeyframesPanel(nukescripts.PythonPanel):
 		
 		# CREATE KNOBS
 		self.tFrameRange = nuke.String_Knob('tFrameRange', 'Frame Range', '%s-%s' % (tFirst, tLast))
-		self.tErrorThreshold = nuke.Int_Knob('tErrorThreshold', 'Error threshold')
-		self.tErrorThreshold.setValue(2)
+		self.tErrorPercent = nuke.Double_Knob('tErrorPercent', 'Error threshold (%)')
+		self.tErrorPercent.setValue(10)
+		self.tErrorPercent.setRange(1,100)
 		
 		self.pcText = nuke.Text_Knob( '%' )
 		self.pcText.clearFlag( nuke.STARTLINE )
 		
 		# ADD KNOBS
-		for k in (self.tFrameRange, self.tErrorThreshold, self.pcText):
+		for k in (self.tFrameRange, self.tErrorPercent):
 			self.addKnob(k)
 
 
@@ -43,9 +44,24 @@ def getKnobName(knob_name_with_suffix):
 	# naming conventions start getting randomly inconsistent. It probably all falls under the _curvelib.AnimCTransform object type. 
 
 	knob_name = knob_name_with_suffix.split(".")[0]
-	print "knob_name " + knob_name
+	#print "knob_name " + knob_name
 	return knob_name
 
+def getKnobIndex():
+
+	#useful function by Ivan Busquets 
+
+	tclGetAnimIndex = """
+
+	set thisanimation [animations]
+	if {[llength $thisanimation] > 1} {
+		return "-1"
+	} else {
+		return [lsearch [in [join [lrange [split [in $thisanimation {animations}] .] 0 end-1] .] {animations}] $thisanimation]
+	}
+	"""
+
+	return int(nuke.tcl(tclGetAnimIndex))
 
 
 def first_keyframe_location(k):
@@ -106,24 +122,34 @@ def doReduceKeyframes():
 		undo = nuke.Undo()
 		undo.begin("Reduce keyframes")  
 				
-		tErrorThreshold = p.tErrorThreshold.value()
+		tErrorPercent = p.tErrorPercent.value()
 		
-		if (tErrorThreshold > 100):
-			tErrorThreshold = 100
+		if (tErrorPercent > 100):
+			tErrorPercent = 100
 		
-		if (tErrorThreshold < 1):
-			tErrorThreshold = 1
+		if (tErrorPercent < 0.000001):
+			tErrorPercent = 0.000001
+			
+		#print "tErrorPercent " + str(tErrorPercent)
 
 		tFrameRange =  nuke.FrameRange( p.tFrameRange.value() )
 		tFirstFrame = tFrameRange.first()
 		tLastFrame = tFrameRange.last()
 		
 		knob_names = nuke.animations() # Returns the animations names under this knob
+		
+		i=getKnobIndex() #find out if user only clicked on a single knob index, or the entire knob
+		
+		#print "knob index: " + str(i)
 
 		j=0 #index for knob
 		 
 		for knob_name_with_suffix in knob_names: 
 		
+			if(i > -1):
+				j = i
+			
+			#print "for knob_name_with_suffix in knob_names:"
 			
 			knob_name = getKnobName(knob_name_with_suffix)
 			
@@ -141,8 +167,13 @@ def doReduceKeyframes():
 				tOrigLastFrame = tKeys[len(tKeys)-1].x
 												
 				tOrigKeys = len(tOriginalCurve.keys())
+				
+				fErrorHeight = getCurveHeight(tOriginalCurve, tFirstFrame, tLastFrame)
 
-
+				tErrorThreshold = fErrorHeight * (tErrorPercent / 100)
+				
+				#print "tErrorThreshold " + str(tErrorThreshold)
+				
 				if (tOrigKeys >2): #no point in reducing a straight line!
 
 					x = nuke.selectedNode()					
@@ -180,9 +211,10 @@ def doReduceKeyframes():
 					tMasterSlope = 90 - getAngle (deltaH, deltaV) 
 					if (tMasterSlope<0): tMasterSlope = tMasterSlope + 360;
 
-					if ( meanAverageError(tOriginalCurve, tTempCurve, tFirstFrame, tLastFrame, tMasterSlope) < tErrorThreshold ):					
-						print "looks like this selection of frames was a straight line"						
+					if ( findErrorHeight(tOriginalCurve, tTempCurve, tFirstFrame, tLastFrame, tMasterSlope) < tErrorThreshold ):					
+						print "Looks like this selection of frames was a straight line. Reduce the error threshold % if it isn't"						
 					else:
+
 						#otherwise we run the keyframe reducing function on the selected frame range					
 						recursion = findGreatestErrorFrame(tOriginalCurve, tFirstFrame, tLastFrame, tErrorThreshold, tTempKnob, tTempCurve, 0)	
 					
@@ -200,7 +232,11 @@ def doReduceKeyframes():
 			
 				print "No animation found in " + knob_name + " index " + str(j)
 				
-			j=j+1
+			#break the loop if we are only running script on single knob index
+			if(i > -1):
+				break
+			else:
+				j=j+1
 
 		undo.end()
 	
@@ -220,8 +256,6 @@ def findGreatestErrorFrame(tOriginalCurve=None, tFirstFrame=None, tLastFrame=Non
 	
 	tMasterSlope = 90 - getAngle (deltaH, deltaV) 
 	if (tMasterSlope<0): tMasterSlope = tMasterSlope + 360;
-	
-	print "tMasterSlope " + str(tMasterSlope)
 	
 	#check each frame in section and find which is furthest from the base slope	
 	for f in range(tFirstFrame,tLastFrame+1):
@@ -246,33 +280,63 @@ def findGreatestErrorFrame(tOriginalCurve=None, tFirstFrame=None, tLastFrame=Non
 	
 	#our section of frames has now been divided into 2.
 	#we need to check both sections and see if they are within our error threshold
-	firstErrorThreshold = meanAverageError(tOriginalCurve, tTempCurve, tFirstFrame, tErrorFrame, tMasterSlope)
-	secondErrorThreshold = meanAverageError(tOriginalCurve, tTempCurve, tErrorFrame, tLastFrame, tMasterSlope)
+	firstErrorHeight = findErrorHeight(tOriginalCurve, tTempCurve, tFirstFrame, tErrorFrame, tMasterSlope)
+	secondErrorHeight = findErrorHeight(tOriginalCurve, tTempCurve, tErrorFrame, tLastFrame, tMasterSlope)
 	
 	recursion = recursion+1
 	
 	#print "recursion " + str(recursion)
 
 	#if they are not within threshold then we recursively call this function to divide them again
-	if (firstErrorThreshold > tErrorThreshold):
+	if (firstErrorHeight > tErrorThreshold):
 		recursion = findGreatestErrorFrame(tOriginalCurve, tFirstFrame, tErrorFrame, tErrorThreshold, tTempKnob, tTempCurve, recursion)
-	if (secondErrorThreshold > tErrorThreshold):
+	#else:
+	#	print ("frames " + str(tFirstFrame) + " to " + str(tErrorFrame) + " reached an error threshold of " + str(firstErrorHeight))
+	
+	if (secondErrorHeight > tErrorThreshold):
 		recursion = findGreatestErrorFrame(tOriginalCurve, tErrorFrame, tLastFrame, tErrorThreshold, tTempKnob, tTempCurve, recursion)
+	#else:
+	#	print ("frames " + str(tErrorFrame) + " to " + str(tLastFrame) + " reached an error threshold of " + str(secondErrorHeight))
 
 	return recursion
 	
 	
 
-def meanAverageError(tOriginalCurve=None, tNewCurve=None, tFirstFrame=None, tLastFrame=None, tMasterSlope=None):
+def findErrorHeight(tOriginalCurve=None, tNewCurve=None, tFirstFrame=None, tLastFrame=None, tMasterSlope=None):
 	
-	#function returns an error value, as a percent of the total height of the animation curve. 
+	#function returns greatest error distance on section of keyframe . 
+		
+	deltaH = float(tLastFrame - tFirstFrame)
+	deltaV = float( tNewCurve.evaluate(tLastFrame) - tNewCurve.evaluate(tFirstFrame) )
+
 	
-	tHighVal = 0
-	tLowVal = 0
-	tValRange = 0
-	tErrorTotal = 0
-	tTotalFrames = 0
-	tErrorPercent = 0
+	tDeltaSlope = 90 - getAngle (deltaH, deltaV) 
+
+
+	tHighVal = tOriginalCurve.evaluate(tFirstFrame)
+	tLowVal = tOriginalCurve.evaluate(tFirstFrame)
+	tGreatestError = 0
+
+	for f in range(tFirstFrame,tLastFrame+1):
+		
+		#trigonometry time! find length of 'hypotenuse' side		
+		tHypotenuse = (tOriginalCurve.evaluate(f) - tNewCurve.evaluate(f))
+		
+		#use our 'sin' function to then calculate length of 'opposite' side - this is our error value	
+		tDifference = (math.sin(math.radians(tDeltaSlope))*tHypotenuse)
+
+		if (abs(tDifference) > tGreatestError):
+			tGreatestError = abs(tDifference)
+
+	return tGreatestError
+
+def getCurveHeight(tOriginalCurve=None, tFirstFrame=None, tLastFrame=None):
+	
+	#function finds the highest and lowest points in the curve and returns the height between them . 
+
+	tHighVal = tOriginalCurve.evaluate(tFirstFrame)
+	tLowVal = tOriginalCurve.evaluate(tFirstFrame)
+	
 
 	for f in range(tFirstFrame,tLastFrame+1):
 		v = tOriginalCurve.evaluate(f)
@@ -280,23 +344,11 @@ def meanAverageError(tOriginalCurve=None, tNewCurve=None, tFirstFrame=None, tLas
 			tLowVal = v
 		if (v>tHighVal):
 			tHighVal = v
-			
-		#trigonometry time! find length of 'hypotenuse' side		
-		tHypotenuse = (tOriginalCurve.evaluate(f) - tNewCurve.evaluate(f))
 		
-		#use our 'sin' function to then calculate length of 'opposite' side - this is our error value	
-		tDifference = (math.sin(math.radians(tMasterSlope))*tHypotenuse)
+	tCurveHeight = (tHighVal - tLowVal)
+	
+	#print "tCurveHeight " + str(tCurveHeight)
 
-		#tDifference = v - tNewCurve.evaluate(f)
-		tErrorTotal = tErrorTotal + abs(tDifference)
-		tTotalFrames +=1
-		
-	if tErrorTotal:
-		tAverageError = tErrorTotal / tTotalFrames
-		tValRange = tHighVal - tLowVal
-		tErrorPercent =  100 * (tAverageError / tValRange)
-
-	return tErrorPercent
-
+	return tCurveHeight
 
 	
