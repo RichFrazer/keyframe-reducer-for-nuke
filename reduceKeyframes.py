@@ -1,4 +1,4 @@
-# Keyframe Reducer v1.17 by Richard Frazer 
+# Keyframe Reducer v1.2 by Richard Frazer 
 # http://www.richardfrazer.com/tools-tutorials/keyframe-reduction-script-for-nuke/
 
 import nuke
@@ -72,8 +72,11 @@ def first_keyframe_location(k):
 	# Walk all the knobs of the object and check if they are animated.
 	if k.isAnimated():
 		for tOriginalCurve in k.animations():
-			first_frames.append(tOriginalCurve.keys()[0].x)
-		#print first_frames
+			tKeys = tOriginalCurve.keys()
+			#print len(tKeys)
+			if len(tKeys):
+				first_frames.append(tKeys[0].x)
+		print first_frames
 		return int(min(first_frames))
 	else:
 		return nuke.root().firstFrame()
@@ -88,9 +91,10 @@ def last_keyframe_location(k):
 	if k.isAnimated():
 		for tOriginalCurve in k.animations():
 			tKeys = tOriginalCurve.keys()
-			last_frames.append(tKeys[len(tKeys)-1].x)
+			if len(tKeys):
+				last_frames.append(tKeys[len(tKeys)-1].x)
 		#print last_frames
-		return int(min(last_frames))
+		return int(max(last_frames))
 	else:
 		return nuke.root().lastFrame()
 	
